@@ -38,21 +38,45 @@ class CamadaEnlace:
         if self.callback:
             self.callback(datagrama)
 
-
 class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
         self.linha_serial.registrar_recebedor(self.__raw_recv)
+        
+        #Atributos criados
+        self.escaped = []
+        self.buffer = []
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
     def enviar(self, datagrama):
-        # TODO: Preencha aqui com o código para enviar o datagrama pela linha
-        # serial, fazendo corretamente a delimitação de quadros e o escape de
-        # sequências especiais, de acordo com o protocolo CamadaEnlace (RFC 1055).
-        pass
+        # Constantes SLIP
+        SLIP_END = 0xC0
+        SLIP_ESC = 0xDB
+        SLIP_ESC_END = 0xDC
+        SLIP_ESC_ESC = 0xDD
 
+        # Adiciona o byte delimitador no início
+        quadro = bytes([SLIP_END])
+
+        # Processa o datagrama para aplicar as sequências de escape
+        for byte in datagrama:
+            if byte == SLIP_END:
+                # Substitui 0xC0 por 0xDB 0xDC
+                quadro += bytes([SLIP_ESC, SLIP_ESC_END])
+            elif byte == SLIP_ESC:
+                # Substitui 0xDB por 0xDB 0xDD
+                quadro += bytes([SLIP_ESC, SLIP_ESC_ESC])
+            else:
+                # Caso contrário, insere o byte original
+                quadro += bytes([byte])
+
+        # Adiciona o byte delimitador no final
+        quadro += bytes([SLIP_END])
+
+        # Envia o quadro pela linha serial
+        self.linha_serial.enviar(quadro)
     def __raw_recv(self, dados):
         # TODO: Preencha aqui com o código para receber dados da linha serial.
         # Trate corretamente as sequências de escape. Quando ler um quadro
@@ -62,3 +86,38 @@ class Enlace:
         # apenas pedaços de um quadro, ou um pedaço de quadro seguido de um
         # pedaço de outro, ou vários quadros de uma vez só.
         pass
+    # Constantes SLIP
+        SLIP_END = 0xC0
+        SLIP_ESC = 0xDB
+        SLIP_ESC_END = 0xDC
+        SLIP_ESC_ESC = 0xDD
+
+        for byte in dados:
+            if byte == SLIP_END:
+                # Verifica se o buffer contém um datagrama completo
+                if self.buffer:
+                    try:
+                        # Repassa o datagrama completo para a camada superior, se não estiver vazio
+                        if len(self.buffer) > 0:
+                            self.callback(bytes(self.buffer))
+                    except:
+                        import traceback
+                        traceback.print_exc()
+                    finally:   
+                        # Limpa o buffer para o próximo quadro
+                        self.buffer.clear()
+                continue
+
+            if self.escaped:
+                # Trata a sequência de escape
+                if byte == SLIP_ESC_END:
+                    self.buffer.append(SLIP_END)
+                elif byte == SLIP_ESC_ESC:
+                    self.buffer.append(SLIP_ESC)
+                self.escaped = False
+            elif byte == SLIP_ESC:
+                # Indica que o próximo byte é parte de uma sequência de escape
+                self.escaped = True
+            else:
+                # Byte normal, adiciona ao buffer
+                self.buffer.append(byte)
